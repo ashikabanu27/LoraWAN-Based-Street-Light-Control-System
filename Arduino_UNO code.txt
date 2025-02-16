@@ -1,0 +1,91 @@
+#if CONFIG_FREERTOS_UNICORE
+#define ARDUINO_RUNNING_CORE 0
+#else
+#define ARDUINO_RUNNING_CORE 1
+#endif
+
+#include "AT_Command.h"
+#include "BatterRead.h"
+#include <BH1750.h>
+#include <Wire.h>
+
+BH1750 lightMeter;
+int LEDPin=2;
+#define fun_Code    0x10 //Function Code
+
+unsigned char TXBuffer[] = {0, 0, fun_Code, 0, 0,0};// 2 byte battery ,fun code , user data bytes
+uint16_t Lux = 0;
+extern bool AT_Flag;//AT TX Flag... AT command check
+
+uint8_t lightstatus;
+
+void TaskUplink(void *pvParameters);
+
+void setup()
+{
+  Serial.begin(115200);
+  pinMode(LEDPin,OUTPUT);
+  UARTsetup();
+  xTaskCreatePinnedToCore(TaskUplink,  "TaskUplink",  10240,  NULL,  3,  NULL,  ARDUINO_RUNNING_CORE);// Sensor flag reading task
+  /* Start the DHT11 Sensor */
+  Wire.begin();
+  // On esp8266 you can select SCL and SDA pins using Wire.begin(D4, D3);
+  // For Wemos / Lolin D1 Mini Pro and the Ambient Light shield use
+  // Wire.begin(D2, D1);
+  lightMeter.begin();
+
+  Serial.println(F("BH1750 Test begin"));
+}
+
+void loop()
+{
+
+}
+
+
+void TaskUplink(void *pvParameters)  // This is a task.
+{
+  (void) pvParameters;
+  for (;;)
+  {
+    float lux = lightMeter.readLightLevel();
+    Serial.print("Lux:  ");
+    Serial.println(lux);
+    Lux = (uint16_t) (lux * 100);
+     if (lux<300)
+  {
+    digitalWrite(LEDPin,HIGH);
+    lightstatus=1;
+    //delay(1000);
+    Serial.println("LIGHT ON");
+  }
+  else
+  {
+    digitalWrite(LEDPin,LOW);
+    //delay(1000);
+    lightstatus=0;
+    Serial.println("LIGHT OFF");
+  }
+
+    if ( AT_Flag != 1 && joinFlag == 1)
+    {
+      if (Class_A == 1) {
+        BatteryRead();//Read the Battery voltage from ESP32
+        TXBuffer[0] = BatRed >> 8;
+        TXBuffer[1] = BatRed;
+      }
+      TXBuffer[3] = (uint8_t) ((Lux) >> 8) ;
+      TXBuffer[4] = Lux ;
+      TXBuffer[5] = lightstatus ;
+      /* Transmit Function From ESP32 to STM8 */
+      UserTXFun(TXBuffer, sizeof(TXBuffer));// User TXBuffer and Buffer size...
+      for (int i = 0; i < 1000; i++)
+      {
+        ;
+      }
+      memset(TXBuffer, 0, sizeof (TXBuffer));
+      TXBuffer[2] = fun_Code;
+    }
+    vTaskDelay(20000);
+  }
+}
